@@ -20,12 +20,12 @@ namespace
 	static void buildRigKeyMap(
 		ULevelSequence* sequence,
 		const TArray<FRigElementKey>& rigKeys,
-		TMap<TObjectPtr<UControlRig>, TArray<FRigElementKey>>& outKeysByRig
+		TMap<TWeakObjectPtr<UControlRig>, TArray<FRigElementKey>>& outKeysByRig
 	)
 	{
 		outKeysByRig.Reset();
 
-		if (!sequence || rigKeys.IsEmpty())
+		if (!IsValid(sequence) || rigKeys.IsEmpty())
 		{
 			return;
 		}
@@ -36,7 +36,7 @@ namespace
 		for (const FControlRigSequencerBindingProxy& binding : rigBindings)
 		{
 			UControlRig* controlRig = binding.ControlRig;
-			if (!controlRig)
+			if (!IsValid(controlRig))
 			{
 				continue;
 			}
@@ -60,7 +60,7 @@ namespace
 
 			if (!matchingKeys.IsEmpty())
 			{
-				outKeysByRig.Add(controlRig, MoveTemp(matchingKeys));
+				outKeysByRig.Add(TWeakObjectPtr<UControlRig>(controlRig), MoveTemp(matchingKeys));
 			}
 		}
 	}
@@ -85,15 +85,15 @@ namespace
 	{
 		outControlRig = nullptr;
 
-		if (!cache.sequence)
+		if (!IsValid(cache.sequence))
 		{
 			return false;
 		}
 
-		for (const TPair<TObjectPtr<UControlRig>, TArray<FRigElementKey>>& pair : cache.keysByRig)
+		for (const TPair<TWeakObjectPtr<UControlRig>, TArray<FRigElementKey>>& pair : cache.keysByRig)
 		{
-			UControlRig* controlRig = pair.Key;
-			if (!controlRig)
+			UControlRig* controlRig = pair.Key.Get();
+			if (!IsValid(controlRig))
 			{
 				continue;
 			}
@@ -113,10 +113,31 @@ namespace
 		cache.matchedRigCount = cache.keysByRig.Num();
 		cache.matchedKeyCount = 0;
 
-		for (const TPair<TObjectPtr<UControlRig>, TArray<FRigElementKey>>& pair : cache.keysByRig)
+		for (const TPair<TWeakObjectPtr<UControlRig>, TArray<FRigElementKey>>& pair : cache.keysByRig)
 		{
 			cache.matchedKeyCount += pair.Value.Num();
 		}
+	}
+
+	static bool isRigStillBoundToSequence(ULevelSequence* sequence, UControlRig* controlRig)
+	{
+		if (!IsValid(sequence) || !IsValid(controlRig))
+		{
+			return false;
+		}
+
+		const TArray<FControlRigSequencerBindingProxy> rigBindings =
+			UControlRigSequencerEditorLibrary::GetControlRigs(sequence);
+
+		for (const FControlRigSequencerBindingProxy& binding : rigBindings)
+		{
+			if (binding.ControlRig == controlRig)
+			{
+				return true;
+			}
+		}
+
+		return false;
 	}
 }
 
@@ -128,7 +149,7 @@ bool UReadControlRigKeyLibrary::buildControlRigKeyCache(
 {
 	clearCacheData(outCache);
 
-	if (!sequence || rigKeys.IsEmpty())
+	if (!IsValid(sequence) || rigKeys.IsEmpty())
 	{
 		return false;
 	}
@@ -157,7 +178,7 @@ void UReadControlRigKeyLibrary::clearControlRigKeyCache(FControlRigKeyCache& cac
 
 bool UReadControlRigKeyLibrary::isControlRigKeyCacheUsable(const FControlRigKeyCache& cache)
 {
-	return cache.sequence != nullptr && cache.keysByRig.Num() > 0;
+	return IsValid(cache.sequence) && cache.keysByRig.Num() > 0;
 }
 
 bool UReadControlRigKeyLibrary::getControlRotationInSequenceAtFrame(
@@ -169,7 +190,7 @@ bool UReadControlRigKeyLibrary::getControlRotationInSequenceAtFrame(
 {
 	outRotation = FRotator::ZeroRotator;
 
-	if (!sequence)
+	if (!IsValid(sequence))
 	{
 		return false;
 	}
@@ -182,7 +203,7 @@ bool UReadControlRigKeyLibrary::getControlRotationInSequenceAtFrame(
 	for (const FControlRigSequencerBindingProxy& binding : rigBindings)
 	{
 		UControlRig* controlRig = binding.ControlRig;
-		if (!controlRig)
+		if (!IsValid(controlRig))
 		{
 			continue;
 		}
@@ -200,7 +221,7 @@ bool UReadControlRigKeyLibrary::getControlRotationInSequenceAtFrame(
 		}
 	}
 
-	if (!matchedRig)
+	if (!IsValid(matchedRig))
 	{
 		return false;
 	}
@@ -226,7 +247,12 @@ bool UReadControlRigKeyLibrary::getControlRotationFromCacheAtFrame(
 	outRotation = FRotator::ZeroRotator;
 
 	UControlRig* matchedRig = nullptr;
-	if (!findRigInCache(cache, rigKey, matchedRig) || !matchedRig || !cache.sequence)
+	if (!findRigInCache(cache, rigKey, matchedRig) || !IsValid(matchedRig) || !IsValid(cache.sequence))
+	{
+		return false;
+	}
+
+	if (!isRigStillBoundToSequence(cache.sequence, matchedRig))
 	{
 		return false;
 	}
@@ -300,20 +326,20 @@ void UReadControlRigKeyLibrary::getModifiedControlsInSequenceAtFrame(
 {
 	outModifiedKeys.Reset();
 
-	if (!sequence || rigKeys.IsEmpty())
+	if (!IsValid(sequence) || rigKeys.IsEmpty())
 	{
 		return;
 	}
 
-	TMap<TObjectPtr<UControlRig>, TArray<FRigElementKey>> keysByRig;
+	TMap<TWeakObjectPtr<UControlRig>, TArray<FRigElementKey>> keysByRig;
 	buildRigKeyMap(sequence, rigKeys, keysByRig);
 
 	const FFrameNumber discreteFrame(frameNumber);
 
-	for (const TPair<TObjectPtr<UControlRig>, TArray<FRigElementKey>>& pair : keysByRig)
+	for (const TPair<TWeakObjectPtr<UControlRig>, TArray<FRigElementKey>>& pair : keysByRig)
 	{
-		UControlRig* controlRig = pair.Key;
-		if (!controlRig)
+		UControlRig* controlRig = pair.Key.Get();
+		if (!IsValid(controlRig) || !controlRig->GetHierarchy())
 		{
 			continue;
 		}
@@ -346,17 +372,22 @@ void UReadControlRigKeyLibrary::getModifiedControlsFromCacheAtFrame(
 {
 	outModifiedKeys.Reset();
 
-	if (!cache.sequence || cache.keysByRig.IsEmpty())
+	if (!IsValid(cache.sequence) || cache.keysByRig.IsEmpty())
 	{
 		return;
 	}
 
 	const FFrameNumber discreteFrame(frameNumber);
 
-	for (const TPair<TObjectPtr<UControlRig>, TArray<FRigElementKey>>& pair : cache.keysByRig)
+	for (const TPair<TWeakObjectPtr<UControlRig>, TArray<FRigElementKey>>& pair : cache.keysByRig)
 	{
-		UControlRig* controlRig = pair.Key;
-		if (!controlRig)
+		UControlRig* controlRig = pair.Key.Get();
+		if (!IsValid(controlRig) || !controlRig->GetHierarchy())
+		{
+			continue;
+		}
+
+		if (!isRigStillBoundToSequence(cache.sequence, controlRig))
 		{
 			continue;
 		}

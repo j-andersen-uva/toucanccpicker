@@ -25,7 +25,7 @@ struct FControlRigKeyCache
 	UPROPERTY(BlueprintReadOnly, Category = "Toucan|Sequencer")
 	int32 matchedKeyCount = 0;
 
-	TMap<TObjectPtr<UControlRig>, TArray<FRigElementKey>> keysByRig;
+	TMap<TWeakObjectPtr<UControlRig>, TArray<FRigElementKey>> keysByRig;
 };
 
 UCLASS()
