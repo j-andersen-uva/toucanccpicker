@@ -12,6 +12,8 @@ Besides the present functionalities from the CC Rig and Picker, the Toucan versi
 - ReKey shortcut
 - Finger and body control visualize option that removes old keys where necesary
 - LookAt offset selector
+- Ability to see what values are altered at current playhead time for the rig.
+- Buttons to quickly move camera to set angles of the hand.
 
 The version of the Toucan Rig adds:
 - LookAt offset for eyebones
