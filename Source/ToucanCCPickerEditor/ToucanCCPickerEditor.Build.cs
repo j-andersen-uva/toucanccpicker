@@ -11,7 +11,9 @@ public class ToucanCCPickerEditor : ModuleRules
             {
                 "Core",
                 "CoreUObject",
-                "Engine"
+                "Engine",
+                "ControlRig",
+                "RigVM"
             }
         );
 
@@ -25,7 +27,6 @@ public class ToucanCCPickerEditor : ModuleRules
                 "LevelEditor",
                 "InputCore",
                 "Projects",
-                "ControlRig",
                 "ControlRigEditor",
                 "LevelSequence",
                 "MovieScene",
