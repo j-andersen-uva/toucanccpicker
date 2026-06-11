@@ -1,9 +1,18 @@
 #include "ReadControlRigKeyLibrary.h"
 
+#include "Channels/MovieSceneBoolChannel.h"
+#include "Channels/MovieSceneByteChannel.h"
+#include "Channels/MovieSceneFloatChannel.h"
+#include "Channels/MovieSceneIntegerChannel.h"
 #include "LevelSequence.h"
+#include "LevelSequenceEditorBlueprintLibrary.h"
+#include "MovieSceneSequencePlayer.h"
 #include "ControlRig.h"
 #include "Rigs/RigHierarchy.h"
 #include "ControlRigSequencerEditorLibrary.h"
+#include "Sequencer/ControlRigSequencerHelpers.h"
+#include "Sequencer/MovieSceneControlRigParameterSection.h"
+#include "Sequencer/MovieSceneControlRigParameterTrack.h"
 #include "MovieSceneTimeHelpers.h"
 
 namespace
@@ -138,6 +147,164 @@ namespace
 		}
 
 		return false;
+	}
+
+	static FFrameNumber getCurrentSequencerFrame()
+	{
+		const FMovieSceneSequencePlaybackParams position =
+			ULevelSequenceEditorBlueprintLibrary::GetGlobalPosition(EMovieSceneTimeUnit::DisplayRate);
+
+		return position.Frame.GetFrame();
+	}
+
+	static UMovieSceneControlRigParameterSection* findSectionForControl(
+		UMovieSceneControlRigParameterTrack* track,
+		FName controlName,
+		FFrameNumber currentFrame
+	)
+	{
+		if (!track)
+		{
+			return nullptr;
+		}
+
+		if (UMovieSceneControlRigParameterSection* sectionToKey =
+			Cast<UMovieSceneControlRigParameterSection>(track->GetSectionToKey(controlName)))
+		{
+			return sectionToKey;
+		}
+
+		for (UMovieSceneSection* movieSection : track->GetAllSections())
+		{
+			UMovieSceneControlRigParameterSection* section =
+				Cast<UMovieSceneControlRigParameterSection>(movieSection);
+			if (section && section->IsActive() && section->GetRange().Contains(currentFrame))
+			{
+				return section;
+			}
+		}
+
+		for (UMovieSceneSection* movieSection : track->GetAllSections())
+		{
+			UMovieSceneControlRigParameterSection* section =
+				Cast<UMovieSceneControlRigParameterSection>(movieSection);
+			if (section && section->IsActive())
+			{
+				return section;
+			}
+		}
+
+		return nullptr;
+	}
+
+	template<typename ValueType>
+	static bool findPreviousKeyIndex(
+		TArrayView<const FFrameNumber> keyTimes,
+		TArrayView<const ValueType> keyValues,
+		FFrameNumber currentFrame,
+		int32& outPreviousIndex
+	)
+	{
+		outPreviousIndex = INDEX_NONE;
+
+		const int32 keyCount = FMath::Min(keyTimes.Num(), keyValues.Num());
+		for (int32 keyIndex = 0; keyIndex < keyCount; ++keyIndex)
+		{
+			if (keyTimes[keyIndex] < currentFrame)
+			{
+				outPreviousIndex = keyIndex;
+			}
+			else
+			{
+				break;
+			}
+		}
+
+		return outPreviousIndex != INDEX_NONE;
+	}
+
+	static bool duplicatePreviousFloatChannelKey(
+		FMovieSceneFloatChannel* channel,
+		FFrameNumber currentFrame
+	)
+	{
+		if (!channel)
+		{
+			return false;
+		}
+
+		int32 previousIndex = INDEX_NONE;
+		if (!findPreviousKeyIndex(channel->GetTimes(), channel->GetValues(), currentFrame, previousIndex))
+		{
+			return false;
+		}
+
+		const FMovieSceneFloatValue previousValue = channel->GetValues()[previousIndex];
+		channel->GetData().UpdateOrAddKey(currentFrame, previousValue);
+		return true;
+	}
+
+	static bool duplicatePreviousBoolChannelKey(
+		FMovieSceneBoolChannel* channel,
+		FFrameNumber currentFrame
+	)
+	{
+		if (!channel)
+		{
+			return false;
+		}
+
+		int32 previousIndex = INDEX_NONE;
+		if (!findPreviousKeyIndex(channel->GetTimes(), channel->GetValues(), currentFrame, previousIndex))
+		{
+			return false;
+		}
+
+		const bool previousValue = channel->GetValues()[previousIndex];
+		channel->GetData().UpdateOrAddKey(currentFrame, previousValue);
+		return true;
+	}
+
+	static bool duplicatePreviousIntegerChannelKey(
+		FMovieSceneIntegerChannel* channel,
+		FFrameNumber currentFrame
+	)
+	{
+		if (!channel)
+		{
+			return false;
+		}
+
+		int32 previousIndex = INDEX_NONE;
+		if (!findPreviousKeyIndex(channel->GetTimes(), channel->GetValues(), currentFrame, previousIndex))
+		{
+			return false;
+		}
+
+		const int32 previousValue = channel->GetValues()[previousIndex];
+		channel->GetData().UpdateOrAddKey(currentFrame, previousValue);
+		return true;
+	}
+
+	static bool duplicatePreviousByteChannelKey(
+		FMovieSceneByteChannel* channel,
+		FFrameNumber currentFrame
+	)
+	{
+		if (!channel)
+		{
+			return false;
+		}
+
+		int32 previousIndex = INDEX_NONE;
+		if (!findPreviousKeyIndex(channel->GetTimes(), channel->GetValues(), currentFrame, previousIndex))
+		{
+			return false;
+		}
+
+		const uint8 previousValue = channel->GetValues()[previousIndex];
+		channel->GetData().UpdateOrAddKey(currentFrame, previousValue);
+		return true;
 	}
 }
 
@@ -409,4 +576,122 @@ void UReadControlRigKeyLibrary::getModifiedControlsFromCacheAtFrame(
 			}
 		}
 	}
+}
+
+bool UReadControlRigKeyLibrary::duplicatePreviousControlKeyAtCurrentTime(
+	const FControlRigSequencerBindingProxy& rigBinding,
+	const FRigElementKey& rigKey
+)
+{
+	UControlRig* controlRig = rigBinding.ControlRig;
+	UMovieSceneControlRigParameterTrack* track = rigBinding.Track;
+
+	if (!IsValid(controlRig) || !IsValid(track) || rigKey.Name.IsNone())
+	{
+		return false;
+	}
+
+	const URigHierarchy* hierarchy = controlRig->GetHierarchy();
+	if (!hierarchy)
+	{
+		return false;
+	}
+
+	const FRigElementKey controlKey(rigKey.Name, ERigElementType::Control);
+	const FRigControlElement* controlElement = hierarchy->Find<FRigControlElement>(controlKey);
+	if (!controlElement || !hierarchy->IsAnimatable(controlElement))
+	{
+		return false;
+	}
+
+	const FFrameNumber currentFrame = getCurrentSequencerFrame();
+	UMovieSceneControlRigParameterSection* section =
+		findSectionForControl(track, controlKey.Name, currentFrame);
+	if (!section)
+	{
+		return false;
+	}
+
+	section->Modify();
+
+	bool duplicatedAnyChannel = false;
+
+	switch (controlElement->Settings.ControlType)
+	{
+		case ERigControlType::Float:
+		case ERigControlType::ScaleFloat:
+		case ERigControlType::Vector2D:
+		case ERigControlType::Position:
+		case ERigControlType::Scale:
+		case ERigControlType::Rotator:
+		case ERigControlType::Transform:
+		case ERigControlType::TransformNoScale:
+		case ERigControlType::EulerTransform:
+		{
+			TArrayView<FMovieSceneFloatChannel*> channels =
+				FControlRigSequencerHelpers::GetFloatChannels(controlRig, controlKey.Name, section);
+			for (FMovieSceneFloatChannel* channel : channels)
+			{
+				duplicatedAnyChannel |= duplicatePreviousFloatChannelKey(channel, currentFrame);
+			}
+			break;
+		}
+		case ERigControlType::Bool:
+		{
+			TArrayView<FMovieSceneBoolChannel*> channels =
+				FControlRigSequencerHelpers::GetBoolChannels(controlRig, controlKey.Name, section);
+			for (FMovieSceneBoolChannel* channel : channels)
+			{
+				duplicatedAnyChannel |= duplicatePreviousBoolChannelKey(channel, currentFrame);
+			}
+			break;
+		}
+		case ERigControlType::Integer:
+		{
+			TArrayView<FMovieSceneIntegerChannel*> channels =
+				FControlRigSequencerHelpers::GetIntegerChannels(controlRig, controlKey.Name, section);
+			for (FMovieSceneIntegerChannel* channel : channels)
+			{
+				duplicatedAnyChannel |= duplicatePreviousIntegerChannelKey(channel, currentFrame);
+			}
+			break;
+		}
+		default:
+		{
+			TArrayView<FMovieSceneByteChannel*> channels =
+				FControlRigSequencerHelpers::GetByteChannels(controlRig, controlKey.Name, section);
+			for (FMovieSceneByteChannel* channel : channels)
+			{
+				duplicatedAnyChannel |= duplicatePreviousByteChannelKey(channel, currentFrame);
+			}
+			break;
+		}
+	}
+
+	if (duplicatedAnyChannel)
+	{
+		track->Modify();
+		ULevelSequenceEditorBlueprintLibrary::RefreshCurrentLevelSequence();
+	}
+
+	return duplicatedAnyChannel;
+}
+
+int32 UReadControlRigKeyLibrary::duplicatePreviousControlKeysAtCurrentTime(
+	const FControlRigSequencerBindingProxy& rigBinding,
+	const TArray<FRigElementKey>& rigKeys,
+	TArray<FRigElementKey>& outDuplicatedKeys
+)
+{
+	outDuplicatedKeys.Reset();
+
+	for (const FRigElementKey& rigKey : rigKeys)
+	{
+		if (duplicatePreviousControlKeyAtCurrentTime(rigBinding, rigKey))
+		{
+			outDuplicatedKeys.Add(FRigElementKey(rigKey.Name, ERigElementType::Control));
+		}
+	}
+
+	return outDuplicatedKeys.Num();
 }

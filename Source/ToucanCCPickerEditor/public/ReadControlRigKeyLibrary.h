@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "ControlRigSequencerEditorLibrary.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "Rigs/RigHierarchyDefines.h"
 #include "ReadControlRigKeyLibrary.generated.h"
@@ -105,5 +106,18 @@ public:
 		int32 frameNumber,
 		float tolerance,
 		TArray<FRigElementKey>& outModifiedKeys
+	);
+
+	UFUNCTION(BlueprintCallable, Category = "Toucan|Sequencer")
+	static bool duplicatePreviousControlKeyAtCurrentTime(
+		const FControlRigSequencerBindingProxy& rigBinding,
+		const FRigElementKey& rigKey
+	);
+
+	UFUNCTION(BlueprintCallable, Category = "Toucan|Sequencer")
+	static int32 duplicatePreviousControlKeysAtCurrentTime(
+		const FControlRigSequencerBindingProxy& rigBinding,
+		const TArray<FRigElementKey>& rigKeys,
+		TArray<FRigElementKey>& outDuplicatedKeys
 	);
 };
